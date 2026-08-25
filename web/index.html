@@ -1,3 +1,5 @@
+$ cat /home/user/Postcard/rules-chatbot/web/index.html
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -182,8 +184,8 @@
 <script type="module">
   import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
 
-  const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
-  const MAX_RESPONSE_TOKENS = 400;
+  const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+  const MAX_RESPONSE_TOKENS = 350;
 
   const statusEl = document.getElementById("status");
   const progressTrack = document.getElementById("progress-track");
@@ -218,14 +220,24 @@
     const rulesText = await res.text();
     return [
       "You are a rules-lookup assistant for the SoCal Swordfight 2026 HEMA tournament.",
-      "Answer ONLY using the ruleset text provided below. Do not use any outside",
-      "knowledge about HEMA, swordfighting, or other tournaments' rules.",
-      "If the answer isn't clearly covered in this document, say so plainly and",
-      "suggest the person ask a tournament director/staff member, or check the",
-      "full rules on hemascorecard.com — do not guess or make anything up.",
-      "Keep answers short and direct. This document is a condensed summary, not",
-      "the complete ruleset, so for anything high-stakes (safety, a disputed",
-      "call, equipment approval) always point to staff even if you think you",
+      "Answer ONLY using the ruleset text below — no outside HEMA knowledge.",
+      "",
+      "'Cut' means two UNRELATED things here: (1) a live scoring action in the",
+      "weapon tournaments (Longsword/Rapier/Saber/etc.), vs (2) a judged attempt",
+      "against a tatami/paper target with a sharp sword in CUTTING TOURNAMENTS —",
+      "different rules and scoring. Identify which one applies before answering;",
+      "ask for clarification rather than guessing if unclear. This applies more",
+      "broadly too: don't blend text from unrelated sections just because they",
+      "share a keyword.",
+      "",
+      "Never invent a number, point value, or rule not explicitly stated below —",
+      "say you don't know instead of guessing. Prefer quoting/closely paraphrasing",
+      "the actual relevant sentence over freely synthesizing an answer.",
+      "",
+      "If not covered here, say so and suggest asking tournament staff, or",
+      "checking hemascorecard.com. Keep answers short. This is a condensed",
+      "summary, not the complete ruleset — for anything high-stakes (safety, a",
+      "disputed call, equipment approval) point to staff even if you think you",
       "know the answer.",
       "",
       "--- RULESET (condensed) ---",
