@@ -1,3 +1,5 @@
+$ cat /home/user/Postcard/rules-chatbot/web/rules-condensed.txt
+
 SOCAL SWORDFIGHT 2026 — CONDENSED RULES REFERENCE
 (This is a shortened summary of the official ruleset for quick lookup. It omits
 some fine detail, especially exact cutting-tournament choreography and judge
@@ -184,6 +186,10 @@ CASTILLE ARMORY DUAL SIDESWORD
   hilt, no knucklebow/finger rings).
 
 == CUTTING TOURNAMENTS (Longsword & Arming Sword) ==
+(A SEPARATE competition from sparring — sharp swords cutting a tatami/paper
+target, not an opponent. "Cut" here means a judged cutting-tournament
+attempt, NOT a sparring scoring action — do not mix this section into
+sparring/match-scoring questions or vice versa.)
 Goal: test cutting mechanics that can't be evaluated in sparring.
 Safety: follow staff direction exactly, never swing near others, dry
 hands/hilt, don't touch mats without instruction, don't cut before staff
@@ -220,14 +226,10 @@ once, even with multiple medals). All tournaments except experimental and
 smallsword count toward the aggregate award.
 
 == HOW JUDGING/DIRECTING WORKS (background, staff-facing material) ==
-A typical match has one director and (usually) three line judges. After
-each exchange, judges signal independently what they saw (a clean hit,
-double hit, no action, afterblow, or "abstain/didn't see") using colored
-batons, then signal the target area if a hit was called. The director
-generally follows the judges' majority call, but has discretion — most
-often exercised on questions of quality or safety — and can call a brief,
-neutral private conference ("what did you see?") if judges disagree,
-before making the final ruling. Directors who habitually overrule their
-judges without cause may be rotated out. Anyone (judge, fighter, or
-spectator) can call "Hold" or "Safety" at any time for a safety concern,
-and "MEDIC" immediately if someone needs medical attention.
+A match has one director and (usually) three line judges. After each
+exchange, judges independently signal what they saw (clean hit, double
+hit, no action, afterblow, or abstain) and the target area. The director
+generally follows the judges' majority call but has discretion (mainly
+for quality/safety questions), and can hold a brief private conference if
+judges disagree before making the final ruling. Anyone can call "Hold" or
+"Safety" for a safety concern, and "MEDIC" immediately for a medical need.
