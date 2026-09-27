@@ -13,13 +13,17 @@ home beforehand, see `../web/`.
 2. **Build the rules-aware model**:
    ```
    cd kiosk
-   ./build-model.sh
+   bash build-model.sh
    ```
+   (Using `bash build-model.sh` rather than `./build-model.sh` avoids
+   needing the file's executable permission bit set, which some download/
+   upload methods don't preserve.)
+
    This pulls a base model (`llama3.1:8b` by default) and bakes the full
    ruleset in as its system prompt, producing a model called
    `swordfight-rules`. On a weaker laptop, use a smaller base model instead:
    ```
-   ./build-model.sh llama3.2:3b
+   bash build-model.sh llama3.2:3b
    ```
    (or `llama3.2:1b` for the lightest option — lower answer quality, but
    noticeably faster on old hardware).
@@ -68,7 +72,7 @@ everything (model + ruleset + interface) runs locally.
    concatenate all documents into one file with clear `## Section` headers
    between them (matching the format already in `rules-full.txt`).
 3. Replace `rules-full.txt` with the new version.
-4. Re-run `./build-model.sh` to rebuild the `swordfight-rules` model with
+4. Re-run `bash build-model.sh` to rebuild the `swordfight-rules` model with
    the updated content.
-5. Also update `../web/rules-condensed.txt` (see that folder's README) —
-   it's a separate, hand-summarized file and won't update automatically.
+5. Commit the new `rules-full.txt` to GitHub — the web version reads this
+   same file and picks up the change automatically within about an hour.

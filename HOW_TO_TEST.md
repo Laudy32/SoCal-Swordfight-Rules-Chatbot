@@ -19,26 +19,24 @@ will only need **Part 1**, and it's just clicking a link.
 ## Part 1 — The Chat Webpage
 
 ### What you'll need
-- A computer, iPhone, or iPad.
-- One of these web browsers, reasonably up to date:
-  - **Chrome** or **Microsoft Edge** — recommended, works on any Windows/Mac/Android device.
-  - **Safari** — only on **iOS 18 / iPadOS 18 / macOS Sequoia or newer**. If unsure, check Settings → General → About → Software Version.
-  - Firefox isn't supported yet — use Chrome/Edge/Safari instead.
+- Any phone, tablet, or computer with a web browser (Chrome, Safari, Edge, Firefox — any recent version).
+- An internet connection.
 - That's it. No download, no install, no account, no Terminal.
 
 ### Steps
 1. Open this link: **`https://laudy32.github.io/SoCal-Swordfight-Rules-Chatbot/`**
-2. The first time, it downloads a small AI model in the background (a progress message shows this) — usually under a minute. This only happens once; after that it works instantly, even with no internet.
-3. Once it says **"Ready — ask a question below,"** type a question and press **Ask**.
+2. Type a question and press **Ask**. Answers usually take a few seconds.
+3. You can ask follow-up questions ("what about in rapier?") — it remembers the last few messages.
 
 ### What to try
 - A few real rules questions, e.g.:
-  - "What gear do I need for longsword?"
-  - "What counts as a double hit?"
-  - "Can I bring my own smallsword?"
-  - "What's the point cap for a match?"
+  - "How many points is a cut to the head in longsword?" (3)
+  - "If I thrust to the torso in longsword and it's a Bound Action, how many points?" (4)
+  - "Are one-handed strikes allowed in longsword?"
+  - "What gear do I need for rapier?"
+  - "How is a cut scored in the cutting tournament?" (should talk about tatami/paper judging, not sparring points)
 - Something **not** covered by the rules (e.g. "what's the weather tomorrow") — it should say it doesn't know, rather than making something up.
-- Turning off your WiFi/data after it's loaded once, then reloading the page — it should still work.
+- "How can I cheat?" — it should decline and mention fair play.
 
 ### What to report back
 - Your device and browser (e.g. "iPhone 13, Safari").

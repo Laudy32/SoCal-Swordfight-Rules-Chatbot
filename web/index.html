@@ -13,9 +13,9 @@
     --text: #e8e9ee;
     --muted: #9aa0b0;
     --accent: #c0392b;
-    --accent-2: #8e2d20;
     --user-bubble: #2a4a6b;
     --bot-bubble: #262a35;
+    --error: #e0786c;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -46,27 +46,6 @@
     font-size: 0.85rem;
     line-height: 1.4;
   }
-  #status {
-    padding: 8px 4px;
-    font-size: 0.85rem;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    min-height: 1.4em;
-  }
-  #progress-track {
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 6px;
-    display: none;
-  }
-  #progress-bar {
-    height: 100%;
-    width: 0%;
-    background: var(--accent);
-    transition: width 0.2s ease;
-  }
   #messages {
     flex: 1;
     overflow-y: auto;
@@ -82,6 +61,7 @@
     line-height: 1.45;
     font-size: 0.95rem;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .msg.user {
     align-self: flex-end;
@@ -93,11 +73,13 @@
     background: var(--bot-bubble);
     border-bottom-left-radius: 3px;
   }
-  .msg.system-note {
+  .msg.bot.pending { color: var(--muted); }
+  .msg.bot.error { color: var(--error); }
+  .msg.note {
     align-self: center;
     background: none;
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     text-align: center;
     max-width: 100%;
   }
@@ -109,12 +91,13 @@
   }
   #question {
     flex: 1;
+    min-width: 0;
     padding: 10px 12px;
     border-radius: 10px;
     border: 1px solid var(--border);
     background: var(--panel);
     color: var(--text);
-    font-size: 0.95rem;
+    font-size: 1rem;
   }
   button {
     padding: 10px 16px;
@@ -129,21 +112,6 @@
     background: var(--border);
     color: var(--muted);
   }
-  #unsupported {
-    display: none;
-    margin: 40px 4px;
-    padding: 18px;
-    border: 1px solid var(--accent);
-    border-radius: 10px;
-    background: var(--panel);
-    line-height: 1.5;
-  }
-  .disclaimer {
-    font-size: 0.75rem;
-    color: var(--muted);
-    text-align: center;
-    padding: 0 4px 10px;
-  }
 </style>
 </head>
 <body>
@@ -151,173 +119,88 @@
 <header>
   <h1>SoCal Swordfight 2026 — Rules Helper</h1>
   <p>
-    Quick reference only, built from a condensed summary of the official
-    ruleset. Runs entirely on this device — nothing you type leaves your
-    browser. For anything high-stakes (a disputed call, safety, equipment
-    approval), ask a tournament director or check the full rules on
-    hemascorecard.com.
+    Answers come from the official 2026 ruleset. Questions are sent to an AI
+    service (Google Gemini) to be answered, so please don't include personal
+    information. For anything high-stakes (a disputed call, safety, equipment
+    approval), ask a tournament director.
   </p>
 </header>
-
-<div id="unsupported">
-  <strong>This browser can't run the on-device model.</strong><br><br>
-  This page needs WebGPU support, which your current browser/device doesn't
-  have. Try a recent version of Chrome, Edge, or Safari (18+), or ask at the
-  SoCal Swordfight info table — a volunteer kiosk running a supported
-  browser has the same tool available.
-</div>
-
-<div id="status">Starting up…
-  <div id="progress-track"><div id="progress-bar"></div></div>
-</div>
 
 <div id="messages"></div>
 
 <form id="composer">
-  <input id="question" type="text" placeholder="Ask about the rules…" autocomplete="off" disabled>
-  <button id="send" type="submit" disabled>Ask</button>
+  <input id="question" type="text" placeholder="Ask about the rules…" autocomplete="off" maxlength="500">
+  <button id="send" type="submit">Ask</button>
 </form>
-<div class="disclaimer">Each question is answered fresh, without memory of earlier ones, to keep this reliable on-device.</div>
 
-<script type="module">
-  import { CreateMLCEngine } from "https://esm.run/@mlc-ai/web-llm";
+<script>
+  // Set this to your Cloudflare Worker's address after deploying it (see worker/README.md).
+  const WORKER_URL = "";
 
-  const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
-  const MAX_RESPONSE_TOKENS = 300;
+  const MAX_HISTORY_TURNS = 6;
 
-  const statusEl = document.getElementById("status");
-  const progressTrack = document.getElementById("progress-track");
-  const progressBar = document.getElementById("progress-bar");
   const messagesEl = document.getElementById("messages");
   const form = document.getElementById("composer");
   const input = document.getElementById("question");
   const sendBtn = document.getElementById("send");
-  const unsupportedEl = document.getElementById("unsupported");
+  const history = [];
 
-  function addMessage(role, text) {
+  function addMessage(className, text) {
     const div = document.createElement("div");
-    div.className = "msg " + role;
+    div.className = "msg " + className;
     div.textContent = text;
     messagesEl.appendChild(div);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     return div;
   }
 
-  if (!("gpu" in navigator)) {
-    unsupportedEl.style.display = "block";
-    statusEl.textContent = "";
-    throw new Error("WebGPU not available in this browser.");
+  function setBusy(busy) {
+    input.disabled = busy;
+    sendBtn.disabled = busy;
+    if (!busy) input.focus();
   }
 
-  let systemPrompt = null;
-  let engine = null;
-
-  async function loadRules() {
-    const res = await fetch("./rules-condensed.txt");
-    if (!res.ok) throw new Error("Could not load rules-condensed.txt");
-    const rulesText = await res.text();
-    return [
-      "You are a rules-lookup assistant for the SoCal Swordfight 2026 HEMA tournament.",
-      "Answer ONLY using the ruleset text below — no outside HEMA knowledge.",
-      "",
-      "If the document clearly states the answer, give it directly and",
-      "confidently, even if the question is worded differently than the text.",
-      "Only say 'I don't know' when the detail genuinely isn't stated below —",
-      "don't default to it out of caution.",
-      "",
-      "'Cut' means two UNRELATED things: (1) a live scoring action in the weapon",
-      "tournaments (Longsword/Rapier/Saber/etc.), vs (2) a judged attempt against",
-      "a tatami/paper target with a sharp sword in CUTTING TOURNAMENTS. Identify",
-      "which applies, use only that section — but answer confidently once you do.",
-      "",
-      "Never invent a number or rule that isn't in the text, but if it IS there,",
-      "state it plainly. Prefer quoting/closely paraphrasing over synthesizing.",
-      "",
-      "If truly not covered, say so and suggest asking staff or checking",
-      "hemascorecard.com. Keep answers short. This is a condensed summary, not",
-      "the complete ruleset — for high-stakes topics (safety, a disputed call,",
-      "equipment approval) point to staff even if you know the answer.",
-      "",
-      "--- RULESET (condensed) ---",
-      rulesText,
-    ].join("\n");
-  }
-
-  async function init() {
-    try {
-      systemPrompt = await loadRules();
-    } catch (err) {
-      statusEl.textContent = "Failed to load rules content: " + err.message;
-      return;
-    }
-
-    statusEl.textContent = "Downloading model (one-time, then cached for offline use)…";
-    progressTrack.style.display = "block";
-
-    try {
-      engine = await CreateMLCEngine(MODEL_ID, {
-        initProgressCallback: (report) => {
-          statusEl.childNodes[0].textContent = report.text || "Loading model…";
-          if (typeof report.progress === "number") {
-            progressBar.style.width = Math.round(report.progress * 100) + "%";
-          }
-        },
-      });
-    } catch (err) {
-      statusEl.textContent = "Model failed to load: " + err.message;
-      return;
-    }
-
-    progressTrack.style.display = "none";
-    statusEl.textContent = "Ready — ask a question below.";
-    input.disabled = false;
-    sendBtn.disabled = false;
+  if (!WORKER_URL) {
+    addMessage("note", "This page isn't connected to its answer service yet. If you're setting it up, see worker/README.md.");
+    setBusy(true);
+  } else {
+    addMessage("note", "Ask anything about the SoCal Swordfight 2026 rules — scoring, gear, conduct, a specific weapon…");
     input.focus();
   }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const question = input.value.trim();
-    if (!question || !engine) return;
+    if (!question || !WORKER_URL) return;
 
     input.value = "";
-    input.disabled = true;
-    sendBtn.disabled = true;
-
+    setBusy(true);
     addMessage("user", question);
-    const botDiv = addMessage("bot", "…");
+    const botDiv = addMessage("bot pending", "Thinking…");
 
     try {
-      const stream = await engine.chat.completions.create({
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: question },
-        ],
-        temperature: 0.3,
-        max_tokens: MAX_RESPONSE_TOKENS,
-        stream: true,
+      const res = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, history: history.slice(-MAX_HISTORY_TURNS) }),
       });
-
-      let full = "";
-      for await (const chunk of stream) {
-        const delta = chunk.choices?.[0]?.delta?.content;
-        if (delta) {
-          full += delta;
-          botDiv.textContent = full;
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.answer) {
+        throw new Error(data.error || "Something went wrong. Please try again in a moment.");
       }
-      if (!full) botDiv.textContent = "(No response generated — try rephrasing the question.)";
+      botDiv.className = "msg bot";
+      botDiv.textContent = data.answer;
+      history.push({ role: "user", text: question }, { role: "assistant", text: data.answer });
     } catch (err) {
-      botDiv.textContent = "Something went wrong answering that: " + err.message;
+      botDiv.className = "msg bot error";
+      botDiv.textContent = err instanceof TypeError
+        ? "Couldn't reach the rules helper — check your internet connection and try again."
+        : err.message;
     }
 
-    input.disabled = false;
-    sendBtn.disabled = false;
-    input.focus();
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    setBusy(false);
   });
-
-  init();
 </script>
 
 </body>

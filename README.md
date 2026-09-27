@@ -4,25 +4,23 @@
 (step-by-step, no GitHub or Terminal experience needed)
 
 A chatbot that answers questions using only the official SoCal Swordfight
-ruleset — no general knowledge, free to run, works with no internet at the
-venue. Two pieces, covering the two situations this needs to work in:
+ruleset — free to run, with an offline option for the venue. Three pieces:
 
-- **`web/`** — a static webpage running a small LLM entirely in the visitor's
-  browser (no server, no install). Free to host, works offline after first
-  load. Uses a condensed rules summary, because in-browser models are
-  limited to a 4,096-token context window. Meant for casual questions from
-  home before the tournament.
-- **`kiosk/`** — Ollama + Open WebUI running on a laptop at the venue, with
-  the complete, verbatim ruleset (no summarizing) as its knowledge source.
-  No context-size constraint here, so nothing is trimmed. This is the
-  authoritative version — what should be running at the info table.
+- **`web/`** — the chat page participants use (published free on GitHub Pages).
+  Works in any modern browser; needs internet.
+- **`worker/`** — the free Cloudflare Worker the page talks to. It sends each
+  question plus the complete, verbatim ruleset to Google Gemini's free tier and
+  returns the answer, keeping the API key out of the public page.
+  **One-time setup instructions: [`worker/README.md`](./worker/README.md).**
+- **`kiosk/`** — Ollama + Open WebUI on a laptop at the venue info table, with
+  the same complete ruleset, running fully offline.
 
-See each folder's README for setup and how to update the rules for a future
-year's ruleset.
+Both the web answers and the kiosk read the same file, `kiosk/rules-full.txt`
+(all 13 official 2026 documents, including staff judging/directing material).
+Updating the rules for a new year means replacing that one file and rebuilding
+the kiosk model — the web version picks it up automatically.
 
-Both pieces share the same design: the LLM is told to answer only from the
-provided ruleset text and to say "ask a tournament official" rather than
-guess when something isn't covered — see the system prompt in `web/index.html`
-and `kiosk/guardrail-preamble.txt`.
-
-Full background and the reasoning behind this design is in the project plan.
+Both are instructed to answer only from the ruleset, say so and point to
+tournament staff when something isn't covered, and decline "how do I cheat"
+style questions — see `GUARDRAILS` in `worker/worker.js` and
+`kiosk/guardrail-preamble.txt`.

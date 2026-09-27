@@ -1,62 +1,38 @@
-# SoCal Swordfight Rules Helper — web (in-browser) version
+# SoCal Swordfight Rules Helper — web page
 
-A single static page that answers rules questions using a small LLM running
-entirely inside the visitor's browser (via [WebLLM](https://github.com/mlc-ai/web-llm)
-+ WebGPU). No server, no backend, no API costs. Meant for casual pre-tournament
-questions from home — for the authoritative, complete ruleset used at the
-venue, see `../kiosk/`.
+A single static page (`index.html`) with a chat box. It sends each question to
+the answer service in `../worker/` (a free Cloudflare Worker), which asks Google
+Gemini to answer from the **complete, word-for-word 2026 ruleset**
+(`../kiosk/rules-full.txt`). Published for free with GitHub Pages; the only
+setting on the page is `WORKER_URL` — see `../worker/README.md` for setup.
 
-## Why this version uses a *condensed* ruleset
+## Why it works this way
+The first version ran a small AI model inside the browser (WebLLM). Those
+models are limited to about 4,000 tokens of context, so they could only see a
+hand-written summary of the ~30,000-token ruleset — and at 1-3 billion
+parameters they made real mistakes in testing: inventing point values,
+confusing sparring "cuts" with Cutting Tournament cuts, refusing questions the
+rules clearly answer, and failing to add a Bound Action bonus to a base score.
+Gemini's context window fits the entire verbatim ruleset with plenty of room,
+and it's a far more capable model, which fixes all of those at the source.
 
-Every prebuilt WebLLM model caps its context window at 4,096 tokens. The full
-2026 ruleset is about 30,000 tokens — far too big to fit. `rules-condensed.txt`
-is a manually-written summary (~3,300 tokens) covering all 13 official
-documents, trimmed to fit comfortably alongside the guardrail instructions and
-a response. It intentionally leaves out the most granular material (exact
-cutting-tournament choreography per tier, judge hand-signal mechanics) — the
-page tells users to ask a director for anything not covered.
-
-Because the budget is tight, each question is answered independently (no
-multi-turn memory) — see the `stream: true` chat call in `index.html`, which
-always sends just the system prompt + the current question.
+Trade-offs of this approach:
+- **Needs internet** to answer (only a small question/answer is sent, so weak
+  WiFi is usually fine). The kiosk (`../kiosk/`) remains the offline option.
+- **Free-tier limits** on Gemini cap how many questions can be answered per day.
+- **Privacy:** questions go to Google. The page says so.
+- In exchange: works in any modern browser on any device (no WebGPU, no model
+  download), and follow-up questions work because recent conversation is sent along.
 
 ## Running locally
-
-Must be served over HTTP (not opened as a `file://` path) — both ES module
-imports and WebGPU require it:
-
+Serve this folder over HTTP and open it:
 ```
 cd web
 python3 -m http.server 8000
 ```
+Then open `http://localhost:8000`. `localhost:8000` is already allowed by the
+Worker, so this works against the deployed Worker once `WORKER_URL` is set.
 
-Then open `http://localhost:8000` in a WebGPU-capable browser (recent Chrome,
-Edge, or Safari 18+). First load downloads the model (~700MB-1GB depending on
-quantization) and caches it in the browser; subsequent loads work offline.
-
-## Deploying
-
-Any static host works — GitHub Pages, Cloudflare Pages, Netlify. Just publish
-this `web/` folder. The model itself is fetched by WebLLM from its own hosted
-model library (Hugging Face), not from your host, so hosting stays cheap
-regardless of model size.
-
-## Updating the rules (e.g. for a 2027 revision)
-
-1. Get the new ruleset text (see `../kiosk/README.md` for the extraction
-   process used for the 2026 `.webarchive` pages).
-2. Rewrite `rules-condensed.txt` as a summary that fits the same rough
-   token budget (~3,000-3,500 tokens) — the guardrail system prompt in
-   `index.html` doesn't need to change.
-3. Redeploy the static files. No rebuild step required.
-
-## Known limitations
-
-- Requires WebGPU (recent Chrome/Edge, or Safari 18+ on iOS/iPadOS/macOS).
-  Older devices/browsers see a fallback message pointing to the staffed
-  venue kiosk instead.
-- Content is a condensed summary, not the verbatim ruleset — flagged in the
-  page header and in the model's own guardrail instructions.
-- Small local models (1B params here) follow instructions less reliably than
-  a large hosted model. Validate actual behavior in a real browser before
-  relying on it (see the main plan's Verification section).
+## Updating the rules
+Nothing to change here — replace `../kiosk/rules-full.txt` and the Worker picks
+it up within about an hour.
