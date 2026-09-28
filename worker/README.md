@@ -43,7 +43,7 @@ between them, and change one line on GitHub.
 6. A long code appears (letters and numbers, often starting with `AIza`). Click the **copy** icon next to it.
 7. Open a text note on your computer (Notes on Mac, Notepad on Windows) and paste the key there for now. You'll need it in Part 3.
 8. **Important:** if Google ever offers to "set up billing" or "upgrade" for this key, say no. Without billing, the key stays on the free plan. The worst that can happen is it stops answering for the rest of the day if lots of people use it — it can never charge you money.
-9. Optional but useful: on the same site, find the page about **rate limits** or **usage limits** and note how many requests per day the free plan allows for **Flash** models (the Worker uses Google's newest Flash model). That number is roughly how many questions the chatbot can answer per day.
+9. Optional but useful: see **Free usage limits** under "Good to know" at the end of this guide for how to check how many questions a day the free plan allows.
 
 You can close this tab.
 
@@ -131,7 +131,8 @@ The chat page shows a short message, with a small grey **Details** line under it
 
 Common messages:
 - **"The AI service had a problem answering"** — Google was briefly overloaded. The Worker already waits and retries a few times (and tries a second model) before showing this, so if it appears, try again in a minute.
-- **"has hit its free usage limit"** — the free daily allowance is used up. It resets by itself, usually within a day.
+- **"is getting a lot of questions right now"** — Google's free per-minute limit was reached on every model the Worker could use. Wait a minute and try again.
+- **"has used up its free questions for today"** — every model's free daily allowance is used up. It resets by itself at midnight Pacific time. See **Free usage limits** below if this happens often.
 - **"Setup problem: the AI model … isn't available and no replacement was found"** — normally you'll never see this: when Google retires a model, the Worker automatically switches to another available Flash model. If it does appear, open the Worker's address in your browser (as in Part 4) and send the `"model"` section to whoever helps maintain the chatbot.
 - **"Setup problem: the AI service key isn't valid"** or **"rejected this helper's key"** — make a new key (Part 1) and put it in the Worker (Part 3; edit the existing `GEMINI_API_KEY` entry instead of adding a new one).
 - **"Requests are only accepted from the SoCal Swordfight rules page"** — the web page's address changed. Ask someone comfortable editing code to add the new address to the `ALLOWED_ORIGINS` list near the top of `worker.js`.
@@ -139,6 +140,10 @@ Common messages:
 Cloudflare's **Logs** tab on the Worker's page shows technical details, useful if you ask someone else for help.
 
 ## Good to know
+- **Free usage limits:** Google gives each of its AI models a separate free allowance — a number of requests per minute and per day. Every question uses one request (plus a few extra if Google is briefly overloaded). When one model's allowance runs out, the Worker automatically moves on to Google's other Flash models, then to the "Flash-Lite" models (still reading the full rulebook, slightly less capable), so the day's total is the sum across models. To see the real numbers:
+  1. Go to **ai.dev/usage?tab=rate-limit** and sign in with the same Google account you used in Part 1.
+  2. The page lists each model with its limits: **RPM** (requests per minute) and **RPD** (requests per day). Add up the RPD numbers for the models with "flash" in the name — that's roughly how many questions the chatbot can answer per day.
+  If that isn't enough for the tournament, the fix is Google's paid plan with a spending limit set. That costs real money, so it's a decision for the organizers — ask whoever maintains the chatbot to work out the likely cost first.
 - **Privacy:** questions people type are sent to Google to be answered, and Google may use free-plan requests to improve its products. The chat page says this and asks people not to type personal information.
 - **Misuse:** the Worker only accepts questions from the rules page and only answers rules questions, so it's not useful to anyone as a general free chatbot. The worst case from misuse is using up the day's free allowance — never a bill, as long as billing stays off (Part 1, step 8).
 - **New rules next year:** replace `kiosk/rules-full.txt` in the repo with the new rulebook. The Worker picks up the new text by itself within about an hour — nothing to change here.

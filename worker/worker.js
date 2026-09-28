@@ -4,8 +4,8 @@
 // here (as the GEMINI_API_KEY secret), never in the public web page.
 
 // ---- Settings you may need to change ----------------------------------------
-// Preferred Gemini model. If Google retires it, the Worker switches to another
-// available Flash model by itself (see pickReplacementModel).
+// Preferred Gemini model. If it's retired, overloaded, or out of free quota, the
+// Worker falls back to other available Flash (then Flash-Lite) models by itself.
 const MODEL = "gemini-flash-latest";
 const RULES_URL =
   "https://raw.githubusercontent.com/Laudy32/SoCal-Swordfight-Rules-Chatbot/main/kiosk/rules-full.txt";
@@ -22,6 +22,8 @@ const MAX_HISTORY_TURNS = 6;
 const MAX_HISTORY_TURN_CHARS = 2000;
 const TRANSIENT_STATUSES = [500, 502, 503, 504];
 const RETRY_DELAYS_MS = [1000, 2500];
+const MAX_MODEL_ATTEMPTS = 4;
+const MODEL_LIST_CACHE_SECONDS = 3600;
 
 const GUARDRAILS = `You answer questions about the SoCal Swordfight 2026 HEMA tournament rules for participants.
 
@@ -42,6 +44,9 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 let rulesCache = { text: null, fetchedAt: 0 };
 let activeModel = MODEL;
+let modelListCache = { lists: null, fetchedAt: 0 };
+// model name -> { until: timestamp ms, daily: boolean } for models out of free quota
+const exhausted = new Map();
 
 async function loadRules() {
   const now = Date.now();
@@ -56,28 +61,107 @@ async function loadRules() {
   return text;
 }
 
-async function listFlashModels(apiKey) {
+// ---- Choosing a model --------------------------------------------------------
+
+function modelVersion(name) {
+  return parseFloat((name.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
+}
+
+// Best first: a "-latest" alias, then the newest version, then the plainest name.
+function rankModels(names) {
+  return [...names].sort(
+    (a, b) =>
+      Number(b.endsWith("-latest")) - Number(a.endsWith("-latest")) ||
+      modelVersion(b) - modelVersion(a) ||
+      a.length - b.length,
+  );
+}
+
+function preferStable(names) {
+  const stable = names.filter((name) => !/preview|exp/i.test(name));
+  return rankModels(stable.length ? stable : names);
+}
+
+async function listModels(apiKey) {
+  const now = Date.now();
+  if (modelListCache.lists && now - modelListCache.fetchedAt < MODEL_LIST_CACHE_SECONDS * 1000) {
+    return modelListCache.lists;
+  }
   const res = await fetch(`${GEMINI_BASE}/models?pageSize=1000`, {
     headers: { "x-goog-api-key": apiKey },
   });
   if (!res.ok) throw new Error(`Model list failed: HTTP ${res.status}`);
   const data = await res.json();
-  const flash = (data.models || [])
+  const usable = (data.models || [])
     .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
     .map((m) => String(m.name || "").replace(/^models\//, ""))
-    .filter((name) => /flash/i.test(name) && !/lite|tts|image|live|audio|embed/i.test(name));
-  const stable = flash.filter((name) => !/preview|exp/i.test(name));
-  return stable.length ? stable : flash;
+    .filter((name) => /flash/i.test(name) && !/tts|image|live|audio|embed/i.test(name));
+  const lists = {
+    flash: preferStable(usable.filter((name) => !/lite/i.test(name))),
+    lite: preferStable(usable.filter((name) => /lite/i.test(name))),
+  };
+  modelListCache = { lists, fetchedAt: now };
+  return lists;
 }
 
-function pickReplacementModel(names, exclude) {
-  const options = names.filter((name) => name !== exclude);
-  const latestAlias = options.find((name) => name.endsWith("-latest"));
-  if (latestAlias) return latestAlias;
-  const version = (name) => parseFloat((name.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
-  options.sort((a, b) => version(b) - version(a) || a.length - b.length);
-  return options[0] || null;
+function isExhausted(model, now = Date.now()) {
+  const entry = exhausted.get(model);
+  if (entry && entry.until > now) return true;
+  exhausted.delete(model);
+  return false;
 }
+
+// Google's free daily quotas reset at midnight Pacific time.
+function msUntilPacificMidnight(now = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  );
+  const secondsIntoDay = Number(parts.hour) * 3600 + Number(parts.minute) * 60 + Number(parts.second);
+  return (86400 - secondsIntoDay) * 1000;
+}
+
+function describeQuota(quotaId) {
+  const id = quotaId || "";
+  const what = /Token/i.test(id) ? "input tokens" : "requests";
+  const per = /PerDay/i.test(id) ? "per day" : /PerMinute/i.test(id) ? "per minute" : "";
+  return `${what} ${per}`.trim();
+}
+
+// Reads Google's "out of quota" (429) error: which limit, for which model, and when to retry.
+function parseQuotaError(bodyText) {
+  let error;
+  try {
+    error = JSON.parse(bodyText).error || {};
+  } catch {
+    error = {};
+  }
+  const details = error.details || [];
+  const violations = details.flatMap((d) => d.violations || []);
+  const retryDelay = details.find((d) => d.retryDelay)?.retryDelay;
+  return {
+    daily: violations.some((v) => /PerDay/i.test(v.quotaId || "")),
+    retrySeconds: retryDelay ? parseFloat(retryDelay) : null,
+    quotaModel: violations.find((v) => v.quotaDimensions?.model)?.quotaDimensions.model || null,
+    summary: violations.map((v) => `${describeQuota(v.quotaId)} limit ${v.quotaValue}`).join("; "),
+  };
+}
+
+function markExhausted(models, quota) {
+  const until = Date.now() + (quota.daily ? msUntilPacificMidnight() : (quota.retrySeconds || 60) * 1000);
+  for (const model of models) {
+    if (model) exhausted.set(model, { until, daily: quota.daily });
+  }
+}
+
+// ---- Calling Gemini ------------------------------------------------------------
 
 function callGemini(model, apiKey, payload) {
   return fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
@@ -102,13 +186,52 @@ async function callGeminiWithRetry(model, apiKey, payload) {
   return res;
 }
 
-function googleDetail(status, model, bodyText) {
-  let message = bodyText;
-  try {
-    message = JSON.parse(bodyText).error?.message || bodyText;
-  } catch {}
-  return `Google ${status} (${model}): ${String(message).replace(/\s+/g, " ").slice(0, 150)}`;
+// Tries the preferred model, then other Flash models, then Flash-Lite, skipping any that are
+// retired or out of free quota. Returns { res, model, preferredRetired } or { failure }.
+async function askGemini(apiKey, payload) {
+  const tried = new Set();
+  let preferredRetired = false;
+  let lists = null;
+  let failure = null;
+
+  for (let attempt = 0; attempt < MAX_MODEL_ATTEMPTS; attempt++) {
+    let model = null;
+    if (attempt === 0 && !isExhausted(activeModel)) {
+      model = activeModel;
+    } else {
+      if (!lists) {
+        try {
+          lists = await listModels(apiKey);
+        } catch (err) {
+          console.log("Model list failed:", err.message);
+          break;
+        }
+      }
+      model = [activeModel, ...lists.flash, ...lists.lite].find((m) => !tried.has(m) && !isExhausted(m));
+    }
+    if (!model) break;
+    tried.add(model);
+
+    const res = await callGeminiWithRetry(model, apiKey, payload);
+    if (res.ok) return { res, model, preferredRetired };
+
+    const text = await res.text().catch(() => "");
+    failure = { status: res.status, text, model };
+    console.log(`Gemini ${res.status} on "${model}":`, text.slice(0, 500));
+
+    if (res.status === 404 && model === activeModel) preferredRetired = true;
+    if (res.status === 429) {
+      const quota = parseQuotaError(text);
+      failure.quota = quota;
+      markExhausted([model, quota.quotaModel], quota);
+    } else if (res.status !== 404 && !TRANSIENT_STATUSES.includes(res.status)) {
+      break; // key or request problem: another model won't help
+    }
+  }
+  return { failure };
 }
+
+// ---- Responses -------------------------------------------------------------------
 
 function corsHeaders(origin) {
   const headers = {
@@ -149,36 +272,54 @@ function cleanHistory(history) {
   return turns;
 }
 
-function explainGeminiError(status, bodyText) {
-  if (status === 429) {
-    return {
-      status: 429,
-      error: "The rules helper has hit its free usage limit for now. Please try again later, or ask tournament staff.",
-    };
-  }
-  if (status === 404) {
-    return {
-      status: 502,
-      error: `Setup problem: the AI model "${activeModel}" isn't available and no replacement was found. Please let tournament staff know.`,
-    };
-  }
-  if (status === 400 && /API key/i.test(bodyText)) {
-    return {
-      status: 502,
-      error: "Setup problem: the AI service key isn't valid. Please let tournament staff know.",
-    };
-  }
-  if (status === 401 || status === 403) {
-    return {
-      status: 502,
-      error: "Setup problem: the AI service rejected this helper's key. Please let tournament staff know.",
-    };
-  }
-  return {
-    status: 502,
-    error: "The AI service had a problem answering. Please try again in a moment.",
-  };
+function googleDetail(status, model, bodyText) {
+  let message = bodyText;
+  try {
+    message = JSON.parse(bodyText).error?.message || bodyText;
+  } catch {}
+  return `Google ${status} (${model}): ${String(message).replace(/\s+/g, " ").slice(0, 150)}`;
 }
+
+const QUOTA_MESSAGES = {
+  daily:
+    "The rules helper has used up its free questions for today. It resets overnight (midnight Pacific time). Until then, please ask tournament staff.",
+  minute: "The rules helper is getting a lot of questions right now. Please try again in about a minute.",
+};
+
+// Every model is out of free quota (so nothing was even tried this time).
+function allExhaustedResponse(origin) {
+  const now = Date.now();
+  const entries = [...exhausted.entries()].filter(([, e]) => e.until > now);
+  const anyMinute = entries.some(([, e]) => !e.daily);
+  const detail = `All models out of free quota: ${entries
+    .map(([m, e]) => `${m} until ${new Date(e.until).toISOString()}`)
+    .join(", ")}`;
+  return json({ error: anyMinute ? QUOTA_MESSAGES.minute : QUOTA_MESSAGES.daily, detail }, 429, origin);
+}
+
+function failureResponse(failure, origin) {
+  const { status, text, model, quota } = failure;
+  if (status === 429) {
+    const detail = quota.summary
+      ? `Google 429 (${model}): ${quota.summary}${quota.retrySeconds ? `; retry in ${Math.ceil(quota.retrySeconds)}s` : ""}`
+      : googleDetail(status, model, text);
+    const now = Date.now();
+    const onlyDaily = [...exhausted.values()].every((e) => e.until <= now || e.daily);
+    return json({ error: onlyDaily ? QUOTA_MESSAGES.daily : QUOTA_MESSAGES.minute, detail }, 429, origin);
+  }
+  let error = "The AI service had a problem answering. Please try again in a moment.";
+  let httpStatus = 502;
+  if (status === 404) {
+    error = `Setup problem: the AI model "${model}" isn't available and no replacement was found. Please let tournament staff know.`;
+  } else if (status === 400 && /API key/i.test(text)) {
+    error = "Setup problem: the AI service key isn't valid. Please let tournament staff know.";
+  } else if (status === 401 || status === 403) {
+    error = "Setup problem: the AI service rejected this helper's key. Please let tournament staff know.";
+  }
+  return json({ error, detail: googleDetail(status, model, text) }, httpStatus, origin);
+}
+
+// ---- Request handlers -------------------------------------------------------------
 
 async function handleHealth(env, origin) {
   let rules = { ok: false };
@@ -188,10 +329,21 @@ async function handleHealth(env, origin) {
   } catch (err) {
     rules = { ok: false, error: err.message };
   }
-  const model = { preferred: MODEL, inUse: activeModel };
+  const now = Date.now();
+  const model = {
+    preferred: MODEL,
+    inUse: activeModel,
+    outOfFreeQuota: Object.fromEntries(
+      [...exhausted.entries()]
+        .filter(([, e]) => e.until > now)
+        .map(([m, e]) => [m, { until: new Date(e.until).toISOString(), daily: e.daily }]),
+    ),
+  };
   if (env.GEMINI_API_KEY) {
     try {
-      model.availableFlashModels = await listFlashModels(env.GEMINI_API_KEY);
+      const lists = await listModels(env.GEMINI_API_KEY);
+      model.availableFlashModels = lists.flash;
+      model.availableFlashLiteModels = lists.lite;
     } catch (err) {
       model.availableFlashModels = { error: err.message };
     }
@@ -237,53 +389,22 @@ async function handleAsk(request, env, origin) {
     return json({ error: "Couldn't load the ruleset right now. Please try again in a moment." }, 502, origin);
   }
 
-  const contents = [...cleanHistory(body.history), { role: "user", parts: [{ text: question }] }];
-
   const payload = {
     systemInstruction: { parts: [{ text: GUARDRAILS + rules }] },
-    contents,
+    contents: [...cleanHistory(body.history), { role: "user", parts: [{ text: question }] }],
     generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
   };
-  let usedModel = activeModel;
-  let geminiRes = await callGeminiWithRetry(usedModel, env.GEMINI_API_KEY, payload);
 
-  if (geminiRes.status === 404) {
-    const unavailable = activeModel;
-    try {
-      const replacement = pickReplacementModel(await listFlashModels(env.GEMINI_API_KEY), unavailable);
-      if (replacement) {
-        console.log(`Model "${unavailable}" unavailable; switching to "${replacement}"`);
-        activeModel = replacement;
-        usedModel = replacement;
-        geminiRes = await callGeminiWithRetry(usedModel, env.GEMINI_API_KEY, payload);
-      }
-    } catch (err) {
-      console.log("Replacement model lookup failed:", err.message);
-    }
+  const { res, model, preferredRetired, failure } = await askGemini(env.GEMINI_API_KEY, payload);
+  if (!res) {
+    return failure ? failureResponse(failure, origin) : allExhaustedResponse(origin);
+  }
+  if (preferredRetired) {
+    console.log(`Model "${activeModel}" retired; switching to "${model}"`);
+    activeModel = model;
   }
 
-  if (TRANSIENT_STATUSES.includes(geminiRes.status)) {
-    // Still failing after retries: try a different Flash model once, without switching permanently.
-    try {
-      const alternative = pickReplacementModel(await listFlashModels(env.GEMINI_API_KEY), usedModel);
-      if (alternative) {
-        console.log(`Model "${usedModel}" still failing (${geminiRes.status}); trying "${alternative}" once`);
-        usedModel = alternative;
-        geminiRes = await callGemini(usedModel, env.GEMINI_API_KEY, payload);
-      }
-    } catch (err) {
-      console.log("Alternative model lookup failed:", err.message);
-    }
-  }
-
-  if (!geminiRes.ok) {
-    const errText = await geminiRes.text();
-    console.log(`Gemini error ${geminiRes.status}:`, errText.slice(0, 500));
-    const { status, error } = explainGeminiError(geminiRes.status, errText);
-    return json({ error, detail: googleDetail(geminiRes.status, usedModel, errText) }, status, origin);
-  }
-
-  const data = await geminiRes.json();
+  const data = await res.json();
   const candidate = data.candidates?.[0];
   const answer = (candidate?.content?.parts || [])
     .filter((p) => typeof p.text === "string" && !p.thought)
@@ -292,10 +413,10 @@ async function handleAsk(request, env, origin) {
     .trim();
 
   if (!answer) {
-    console.log("Empty answer:", JSON.stringify({ promptFeedback: data.promptFeedback, finishReason: candidate?.finishReason }));
     const reason = data.promptFeedback?.blockReason || candidate?.finishReason || "empty response";
+    console.log("Empty answer:", reason);
     return json(
-      { error: "No answer came back for that one. Try rephrasing, or ask tournament staff.", detail: `Google (${usedModel}): ${reason}` },
+      { error: "No answer came back for that one. Try rephrasing, or ask tournament staff.", detail: `Google (${model}): ${reason}` },
       502,
       origin,
     );
