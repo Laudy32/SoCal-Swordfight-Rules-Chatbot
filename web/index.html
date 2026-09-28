@@ -75,6 +75,11 @@
   }
   .msg.bot.pending { color: var(--muted); }
   .msg.bot.error { color: var(--error); }
+  .msg .detail {
+    margin-top: 6px;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
   .msg.note {
     align-self: center;
     background: none;
@@ -186,7 +191,9 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.answer) {
-        throw new Error(data.error || "Something went wrong. Please try again in a moment.");
+        const err = new Error(data.error || "Something went wrong. Please try again in a moment.");
+        err.detail = data.detail;
+        throw err;
       }
       botDiv.className = "msg bot";
       botDiv.textContent = data.answer;
@@ -196,6 +203,12 @@
       botDiv.textContent = err instanceof TypeError
         ? "Couldn't reach the rules helper — check your internet connection and try again."
         : err.message;
+      if (err.detail) {
+        const detail = document.createElement("div");
+        detail.className = "detail";
+        detail.textContent = "Details (for whoever maintains this page): " + err.detail;
+        botDiv.appendChild(detail);
+      }
     }
 
     messagesEl.scrollTop = messagesEl.scrollHeight;

@@ -127,7 +127,10 @@ You can delete the text note now (or keep the API key somewhere safe, like a pas
 
 ## If something goes wrong later
 
-The chat page shows a short message:
+The chat page shows a short message, with a small grey **Details** line under it. When asking someone for help, copy both — the Details line says what Google actually reported.
+
+Common messages:
+- **"The AI service had a problem answering"** — Google was briefly overloaded. The Worker already waits and retries a few times (and tries a second model) before showing this, so if it appears, try again in a minute.
 - **"has hit its free usage limit"** — the free daily allowance is used up. It resets by itself, usually within a day.
 - **"Setup problem: the AI model … isn't available and no replacement was found"** — normally you'll never see this: when Google retires a model, the Worker automatically switches to another available Flash model. If it does appear, open the Worker's address in your browser (as in Part 4) and send the `"model"` section to whoever helps maintain the chatbot.
 - **"Setup problem: the AI service key isn't valid"** or **"rejected this helper's key"** — make a new key (Part 1) and put it in the Worker (Part 3; edit the existing `GEMINI_API_KEY` entry instead of adding a new one).

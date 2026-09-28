@@ -20,6 +20,8 @@ const RULES_CACHE_SECONDS = 3600;
 const MAX_QUESTION_CHARS = 500;
 const MAX_HISTORY_TURNS = 6;
 const MAX_HISTORY_TURN_CHARS = 2000;
+const TRANSIENT_STATUSES = [500, 502, 503, 504];
+const RETRY_DELAYS_MS = [1000, 2500];
 
 const GUARDRAILS = `You answer questions about the SoCal Swordfight 2026 HEMA tournament rules for participants.
 
@@ -83,6 +85,29 @@ function callGemini(model, apiKey, payload) {
     headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify(payload),
   });
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Google's free tier is sometimes briefly overloaded; wait and try again before giving up.
+async function callGeminiWithRetry(model, apiKey, payload) {
+  let res = await callGemini(model, apiKey, payload);
+  for (const delay of RETRY_DELAYS_MS) {
+    if (!TRANSIENT_STATUSES.includes(res.status)) break;
+    const errText = await res.text().catch(() => "");
+    console.log(`Gemini ${res.status} on "${model}", retrying in ${delay}ms:`, errText.slice(0, 200));
+    await sleep(delay);
+    res = await callGemini(model, apiKey, payload);
+  }
+  return res;
+}
+
+function googleDetail(status, model, bodyText) {
+  let message = bodyText;
+  try {
+    message = JSON.parse(bodyText).error?.message || bodyText;
+  } catch {}
+  return `Google ${status} (${model}): ${String(message).replace(/\s+/g, " ").slice(0, 150)}`;
 }
 
 function corsHeaders(origin) {
@@ -219,7 +244,8 @@ async function handleAsk(request, env, origin) {
     contents,
     generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
   };
-  let geminiRes = await callGemini(activeModel, env.GEMINI_API_KEY, payload);
+  let usedModel = activeModel;
+  let geminiRes = await callGeminiWithRetry(usedModel, env.GEMINI_API_KEY, payload);
 
   if (geminiRes.status === 404) {
     const unavailable = activeModel;
@@ -228,10 +254,25 @@ async function handleAsk(request, env, origin) {
       if (replacement) {
         console.log(`Model "${unavailable}" unavailable; switching to "${replacement}"`);
         activeModel = replacement;
-        geminiRes = await callGemini(activeModel, env.GEMINI_API_KEY, payload);
+        usedModel = replacement;
+        geminiRes = await callGeminiWithRetry(usedModel, env.GEMINI_API_KEY, payload);
       }
     } catch (err) {
       console.log("Replacement model lookup failed:", err.message);
+    }
+  }
+
+  if (TRANSIENT_STATUSES.includes(geminiRes.status)) {
+    // Still failing after retries: try a different Flash model once, without switching permanently.
+    try {
+      const alternative = pickReplacementModel(await listFlashModels(env.GEMINI_API_KEY), usedModel);
+      if (alternative) {
+        console.log(`Model "${usedModel}" still failing (${geminiRes.status}); trying "${alternative}" once`);
+        usedModel = alternative;
+        geminiRes = await callGemini(usedModel, env.GEMINI_API_KEY, payload);
+      }
+    } catch (err) {
+      console.log("Alternative model lookup failed:", err.message);
     }
   }
 
@@ -239,7 +280,7 @@ async function handleAsk(request, env, origin) {
     const errText = await geminiRes.text();
     console.log(`Gemini error ${geminiRes.status}:`, errText.slice(0, 500));
     const { status, error } = explainGeminiError(geminiRes.status, errText);
-    return json({ error }, status, origin);
+    return json({ error, detail: googleDetail(geminiRes.status, usedModel, errText) }, status, origin);
   }
 
   const data = await geminiRes.json();
@@ -252,7 +293,12 @@ async function handleAsk(request, env, origin) {
 
   if (!answer) {
     console.log("Empty answer:", JSON.stringify({ promptFeedback: data.promptFeedback, finishReason: candidate?.finishReason }));
-    return json({ error: "No answer came back for that one. Try rephrasing, or ask tournament staff." }, 502, origin);
+    const reason = data.promptFeedback?.blockReason || candidate?.finishReason || "empty response";
+    return json(
+      { error: "No answer came back for that one. Try rephrasing, or ask tournament staff.", detail: `Google (${usedModel}): ${reason}` },
+      502,
+      origin,
+    );
   }
   return json({ answer }, 200, origin);
 }
@@ -269,7 +315,11 @@ export default {
         return await handleAsk(request, env, origin);
       } catch (err) {
         console.log("Unexpected error:", err.stack || err.message);
-        return json({ error: "Something went wrong. Please try again in a moment." }, 500, origin);
+        return json(
+          { error: "Something went wrong. Please try again in a moment.", detail: String(err.message).slice(0, 150) },
+          500,
+          origin,
+        );
       }
     }
     return json({ error: "Method not allowed." }, 405, origin);
