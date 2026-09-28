@@ -22,7 +22,10 @@ const MAX_HISTORY_TURNS = 6;
 const MAX_HISTORY_TURN_CHARS = 2000;
 const TRANSIENT_STATUSES = [500, 502, 503, 504];
 const RETRY_DELAYS_MS = [1000, 2500];
-const MAX_MODEL_ATTEMPTS = 4;
+// Models tried per question: at most MAX_MODEL_FAILURES that are overloaded or retired
+// (slow), but quick "out of free quota" answers are skipped past, up to MAX_MODELS_TRIED.
+const MAX_MODEL_FAILURES = 4;
+const MAX_MODELS_TRIED = 15;
 const MODEL_LIST_CACHE_SECONDS = 3600;
 
 const GUARDRAILS = `You answer questions about the SoCal Swordfight 2026 HEMA tournament rules for participants.
@@ -193,10 +196,11 @@ async function askGemini(apiKey, payload) {
   let preferredRetired = false;
   let lists = null;
   let failure = null;
+  let slowFailures = 0;
 
-  for (let attempt = 0; attempt < MAX_MODEL_ATTEMPTS; attempt++) {
+  while (tried.size < MAX_MODELS_TRIED && slowFailures < MAX_MODEL_FAILURES) {
     let model = null;
-    if (attempt === 0 && !isExhausted(activeModel)) {
+    if (tried.size === 0 && !isExhausted(activeModel)) {
       model = activeModel;
     } else {
       if (!lists) {
@@ -224,7 +228,9 @@ async function askGemini(apiKey, payload) {
       const quota = parseQuotaError(text);
       failure.quota = quota;
       markExhausted([model, quota.quotaModel], quota);
-    } else if (res.status !== 404 && !TRANSIENT_STATUSES.includes(res.status)) {
+    } else if (res.status === 404 || TRANSIENT_STATUSES.includes(res.status)) {
+      slowFailures++;
+    } else {
       break; // key or request problem: another model won't help
     }
   }
