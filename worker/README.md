@@ -125,11 +125,71 @@ You can delete the text note now (or keep the API key somewhere safe, like a pas
 
 ---
 
+## Part 7 — Turn on abuse protection
+
+This stops anyone from using up the day's free questions on purpose. It has two pieces:
+- **A limit per device and per network:** one device can ask 20 questions per 10 minutes and 100 per day. One network (for example a whole venue's WiFi, which everyone there shares) can ask 150 per 10 minutes and 600 per day. The counts are kept in a small free Cloudflare database called `socal-swordfight-rules-limits`, which already exists in your account. It stores only scrambled codes, never anyone's real internet address.
+- **A human check (Cloudflare Turnstile):** proves each question comes from a real person on the rules page, not an automated script. Most people never see it. Occasionally someone may be asked to tick a box.
+
+Do these steps in this order. The chatbot keeps working normally at every step.
+
+### 7a. Make sure the Worker has the latest code
+If you've already pasted the version that contains `LIMITS_DB`, skip this. To check: in GitHub open `worker/worker.js`, and in Cloudflare open the Worker's **Edit code** view. Press **⌘ Command + F** (Mac) or **Ctrl + F** (Windows) in each and search for `LIMITS_DB`. If Cloudflare's copy doesn't have it, redo Part 2a, then Part 2c steps 6–9.
+
+### 7b. Connect the database to the Worker
+1. Go to **dash.cloudflare.com** → **Workers & Pages** (it may be inside **Compute**) → click **socal-swordfight-rules**.
+2. Click the **Settings** tab.
+3. Find the section called **Bindings** and click **Add** (or **+ Add binding**).
+4. From the list of types, choose **D1 database**.
+5. For **Variable name**, type exactly: `LIMITS_DB`
+6. For **D1 database**, choose **socal-swordfight-rules-limits** from the dropdown.
+7. Click **Add Binding** (or **Save** / **Deploy**).
+
+### 7c. Create the human check
+1. In Cloudflare's left-hand menu, click **Turnstile**. If you can't find it, type `Turnstile` into the search box at the top of the dashboard.
+2. Click **Add widget** (sometimes **Add site**).
+3. **Widget name:** `SoCal Swordfight rules helper`
+4. **Hostnames:** click **Add hostnames** (or the box for hostnames), type `laudy32.github.io`, and add it.
+5. **Widget mode:** choose **Managed**.
+6. If asked about **pre-clearance**, choose **No**.
+7. Click **Create**. Two codes appear:
+   - **Site Key** — public, safe to share. It goes into the web page.
+   - **Secret Key** — private. It goes into the Worker. Treat it like a password.
+8. Copy both codes into your text note.
+
+### 7d. Put the Site Key into the web page
+1. On GitHub, open `web/index.html` and click the **pencil icon** (Edit this file).
+2. Press **⌘ Command + F** (Mac) or **Ctrl + F** (Windows) and search for `TURNSTILE_SITE_KEY`. Find the line:
+   ```
+   const TURNSTILE_SITE_KEY = "";
+   ```
+3. Paste the **Site Key** between the two quote marks.
+4. Click **Commit changes…**, then **Commit changes** in the box that pops up. Wait about two minutes.
+
+(Or send the Site Key to whoever maintains the chatbot and they can do this step.)
+
+### 7e. Give the Worker the Secret Key
+Do this **after** 7d. If the Worker starts requiring the check before the page can do it, every question gets turned away.
+1. In Cloudflare, open the Worker → **Settings** → **Variables and Secrets** → **Add**.
+2. **Type:** **Secret**. **Variable name:** `TURNSTILE_SECRET_KEY` (exactly). **Value:** the **Secret Key** from 7c.
+3. Click **Deploy** (or **Save**).
+
+### 7f. Check it's on
+Open the Worker's web address (as in Part 4). Near the end you should see:
+`"protection":{"humanCheck":"on","limits":"on"`
+- `"limits":"off (LIMITS_DB database not connected)"` → redo 7b.
+- `"humanCheck":"off (TURNSTILE_SECRET_KEY not set)"` → redo 7e.
+
+Then ask a question on the chatbot page (in a private window, so you get the newest page) to confirm it still answers.
+
 ## If something goes wrong later
 
 The chat page shows a short message, with a small grey **Details** line under it. When asking someone for help, copy both — the Details line says what Google actually reported.
 
 Common messages:
+- **"You've asked a lot of questions in a short time"** or **"reached today's question limit on this device"** — the per-device limit from Part 7. It clears by itself after 10 minutes, or the next day.
+- **"A lot of questions are coming from your network"** — the per-network limit from Part 7. It usually clears within 10 minutes.
+- **"Couldn't confirm this question came from a person"** — the human check failed. Reloading the page usually fixes it. If it happens to everyone, check that the Site Key in `web/index.html` and the Secret Key in the Worker come from the same Turnstile widget.
 - **"The AI service had a problem answering"** — Google was briefly overloaded. The Worker already waits and retries a few times (and tries a second model) before showing this, so if it appears, try again in a minute.
 - **"is getting a lot of questions right now"** — Google's free per-minute limit was reached on every model the Worker could use. Wait a minute and try again.
 - **"has used up its free questions for today"** — every model's free daily allowance is used up. It resets by itself at midnight Pacific time. See **Free usage limits** below if this happens often.

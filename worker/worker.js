@@ -14,6 +14,20 @@ const ALLOWED_ORIGINS = [
   "http://localhost:8000",
   "http://127.0.0.1:8000",
 ];
+
+// Abuse protection (active once the LIMITS_DB database is connected to this Worker).
+// "device" = one browser; "network" = one internet address, which a whole venue WiFi or
+// phone carrier can share — so network limits are loose, only a backstop against floods.
+const LIMITS = [
+  { name: "device-10min", by: "device", windowSeconds: 600, max: 20,
+    message: "You've asked a lot of questions in a short time. Please wait a few minutes, then try again." },
+  { name: "device-day", by: "device", windowSeconds: 86400, max: 100,
+    message: "You've reached today's question limit on this device. It resets tomorrow; for anything urgent, please ask tournament staff." },
+  { name: "network-10min", by: "network", windowSeconds: 600, max: 150,
+    message: "A lot of questions are coming from your network right now. Please try again in a few minutes, or ask tournament staff." },
+  { name: "network-day", by: "network", windowSeconds: 86400, max: 600,
+    message: "A lot of questions are coming from your network right now. Please try again later, or ask tournament staff." },
+];
 // -----------------------------------------------------------------------------
 
 const RULES_CACHE_SECONDS = 3600;
@@ -237,6 +251,75 @@ async function askGemini(apiKey, payload) {
   return { failure };
 }
 
+// ---- Abuse protection ----------------------------------------------------------------
+
+// Cloudflare Turnstile: proves the question came from a real browser on the rules page.
+// Only enforced once the TURNSTILE_SECRET_KEY secret is set on this Worker.
+async function verifyHuman(env, token, ip) {
+  if (!env.TURNSTILE_SECRET_KEY) return { ok: true };
+  if (typeof token !== "string" || !token || token.length > 2048) return { ok: false, reason: "missing token" };
+  const form = new FormData();
+  form.append("secret", env.TURNSTILE_SECRET_KEY);
+  form.append("response", token);
+  if (ip) form.append("remoteip", ip);
+  let data;
+  try {
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body: form });
+    data = await res.json();
+  } catch (err) {
+    // Cloudflare's checker itself is unreachable: let the question through rather than
+    // take the chatbot down; the per-device limits still apply.
+    console.log("Turnstile verify unavailable (allowing):", err.message);
+    return { ok: true };
+  }
+  if (data.success) return { ok: true };
+  return { ok: false, reason: (data["error-codes"] || []).join(", ") || "rejected" };
+}
+
+// Scrambles device IDs and internet addresses before storing them, so the database never
+// holds anyone's real address.
+async function scramble(secret, value) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(value)));
+  return [...signature.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const COUNT_SQL =
+  "INSERT INTO rate_limits (key, count, expires_at) VALUES (?1, 1, ?2) " +
+  "ON CONFLICT(key) DO UPDATE SET count = count + 1 RETURNING count";
+
+// Counts this question against each limit; returns the first limit exceeded, or null.
+async function checkLimits(env, ctx, deviceId, ip) {
+  if (!env.LIMITS_DB) return null;
+  try {
+    const secret = env.GEMINI_API_KEY;
+    const network = await scramble(secret, `ip:${ip || "unknown"}`);
+    const device = deviceId ? await scramble(secret, `device:${deviceId}`) : `net-${network}`;
+    const now = Date.now();
+    const statements = LIMITS.map((limit) => {
+      const window = Math.floor(now / 1000 / limit.windowSeconds);
+      const who = limit.by === "device" ? device : network;
+      const expiresAt = (window + 1) * limit.windowSeconds * 1000;
+      return env.LIMITS_DB.prepare(COUNT_SQL).bind(`${limit.name}:${who}:${window}`, expiresAt);
+    });
+    const results = await env.LIMITS_DB.batch(statements);
+    if (Math.random() < 0.02 && ctx) {
+      ctx.waitUntil(
+        env.LIMITS_DB.prepare("DELETE FROM rate_limits WHERE expires_at < ?1").bind(now).run().catch(() => {}),
+      );
+    }
+    return LIMITS.find((limit, i) => (results[i]?.results?.[0]?.count ?? 0) > limit.max) || null;
+  } catch (err) {
+    console.log("Limit check failed (allowing):", err.message);
+    return null;
+  }
+}
+
+function validDeviceId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9-]{8,64}$/.test(value) ? value : null;
+}
+
 // ---- Responses -------------------------------------------------------------------
 
 function corsHeaders(origin) {
@@ -327,6 +410,16 @@ function failureResponse(failure, origin) {
 
 // ---- Request handlers -------------------------------------------------------------
 
+async function limitsStatus(env) {
+  if (!env.LIMITS_DB) return "off (LIMITS_DB database not connected)";
+  try {
+    await env.LIMITS_DB.prepare("SELECT COUNT(*) AS n FROM rate_limits").first();
+    return "on";
+  } catch (err) {
+    return `error: ${err.message}`;
+  }
+}
+
 async function handleHealth(env, origin) {
   let rules = { ok: false };
   try {
@@ -361,13 +454,18 @@ async function handleHealth(env, origin) {
       apiKeyConfigured: Boolean(env.GEMINI_API_KEY),
       rules,
       model,
+      protection: {
+        humanCheck: env.TURNSTILE_SECRET_KEY ? "on" : "off (TURNSTILE_SECRET_KEY not set)",
+        limits: await limitsStatus(env),
+        limitRules: LIMITS.map((l) => `${l.max} per ${l.windowSeconds === 86400 ? "day" : `${l.windowSeconds / 60} minutes`} per ${l.by}`),
+      },
     },
     200,
     origin,
   );
 }
 
-async function handleAsk(request, env, origin) {
+async function handleAsk(request, env, ctx, origin) {
   if (!origin || !ALLOWED_ORIGINS.includes(origin)) {
     return json({ error: "Requests are only accepted from the SoCal Swordfight rules page." }, 403, origin);
   }
@@ -385,6 +483,24 @@ async function handleAsk(request, env, origin) {
   if (!question) return json({ error: "Please type a question." }, 400, origin);
   if (question.length > MAX_QUESTION_CHARS) {
     return json({ error: `Please keep questions under ${MAX_QUESTION_CHARS} characters.` }, 400, origin);
+  }
+
+  const ip = request.headers.get("CF-Connecting-IP");
+  const human = await verifyHuman(env, body.humanToken, ip);
+  if (!human.ok) {
+    return json(
+      {
+        error: "Couldn't confirm this question came from a person using the rules page. Please reload the page and try again.",
+        code: "human_check_failed",
+        detail: `Human check: ${human.reason}`,
+      },
+      403,
+      origin,
+    );
+  }
+  const limitHit = await checkLimits(env, ctx, validDeviceId(body.deviceId), ip);
+  if (limitHit) {
+    return json({ error: limitHit.message, code: "rate_limited", detail: `Limit: ${limitHit.name}` }, 429, origin);
   }
 
   let rules;
@@ -431,7 +547,7 @@ async function handleAsk(request, env, origin) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get("Origin");
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
@@ -439,7 +555,7 @@ export default {
     if (request.method === "GET") return handleHealth(env, origin);
     if (request.method === "POST") {
       try {
-        return await handleAsk(request, env, origin);
+        return await handleAsk(request, env, ctx, origin);
       } catch (err) {
         console.log("Unexpected error:", err.stack || err.message);
         return json(

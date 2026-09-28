@@ -75,6 +75,10 @@
   }
   .msg.bot.pending { color: var(--muted); }
   .msg.bot.error { color: var(--error); }
+  #human-check {
+    display: flex;
+    justify-content: center;
+  }
   .msg .detail {
     margin-top: 6px;
     font-size: 0.75rem;
@@ -133,6 +137,8 @@
 
 <div id="messages"></div>
 
+<div id="human-check"></div>
+
 <form id="composer">
   <input id="question" type="text" placeholder="Ask about the rules…" autocomplete="off" maxlength="500">
   <button id="send" type="submit">Ask</button>
@@ -141,6 +147,10 @@
 <script>
   // Set this to your Cloudflare Worker's address after deploying it (see worker/README.md).
   const WORKER_URL = "https://socal-swordfight-rules.jbz5sk6b4b.workers.dev/";
+
+  // Public "site key" of the Cloudflare Turnstile human check (see worker/README.md).
+  // Leave empty to run without the human check.
+  const TURNSTILE_SITE_KEY = "";
 
   const MAX_HISTORY_TURNS = 6;
 
@@ -159,6 +169,76 @@
     return div;
   }
 
+  // A random ID kept in this browser, so the helper can limit how many questions one
+  // device asks. It identifies nothing about the person.
+  const deviceId = (() => {
+    const fresh = () =>
+      (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+    try {
+      let id = localStorage.getItem("rulesHelperDeviceId");
+      if (!id) {
+        id = fresh();
+        localStorage.setItem("rulesHelperDeviceId", id);
+      }
+      return id;
+    } catch {
+      return fresh();
+    }
+  })();
+
+  // Cloudflare Turnstile: usually invisible; shows a checkbox only if Cloudflare is unsure.
+  let humanWidget = null;
+  let tokenWaiter = null;
+
+  function settleToken(token, error) {
+    if (!tokenWaiter) return;
+    const waiter = tokenWaiter;
+    tokenWaiter = null;
+    clearTimeout(waiter.timer);
+    if (error) waiter.reject(error);
+    else waiter.resolve(token);
+  }
+
+  function loadHumanCheck() {
+    if (!TURNSTILE_SITE_KEY) return;
+    window.onHumanCheckLoad = () => {
+      humanWidget = turnstile.render("#human-check", {
+        sitekey: TURNSTILE_SITE_KEY,
+        execution: "execute",
+        appearance: "interaction-only",
+        callback: (token) => settleToken(token, null),
+        "error-callback": () => {
+          settleToken(null, new Error("Couldn't complete the human check. Please reload the page and try again."));
+          return true;
+        },
+      });
+    };
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onHumanCheckLoad";
+    script.async = true;
+    document.head.appendChild(script);
+  }
+
+  function getHumanToken() {
+    if (!TURNSTILE_SITE_KEY) return Promise.resolve(null);
+    if (humanWidget === null) {
+      return Promise.reject(new Error("The human check hasn't loaded yet. Wait a moment, or reload the page, and try again."));
+    }
+    return new Promise((resolve, reject) => {
+      tokenWaiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => settleToken(null, new Error("The human check timed out. Please try again.")), 60000),
+      };
+      try {
+        turnstile.reset(humanWidget);
+        turnstile.execute(humanWidget);
+      } catch {
+        settleToken(null, new Error("Couldn't start the human check. Please reload the page and try again."));
+      }
+    });
+  }
+
   function setBusy(busy) {
     input.disabled = busy;
     sendBtn.disabled = busy;
@@ -170,6 +250,7 @@
     setBusy(true);
   } else {
     addMessage("note", "Ask anything about the SoCal Swordfight 2026 rules — scoring, gear, conduct, a specific weapon…");
+    loadHumanCheck();
     input.focus();
   }
 
@@ -184,10 +265,11 @@
     const botDiv = addMessage("bot pending", "Thinking…");
 
     try {
+      const humanToken = await getHumanToken();
       const res = await fetch(WORKER_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, history: history.slice(-MAX_HISTORY_TURNS) }),
+        body: JSON.stringify({ question, history: history.slice(-MAX_HISTORY_TURNS), deviceId, humanToken }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.answer) {

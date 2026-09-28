@@ -37,6 +37,7 @@ will only need **Part 1**, and it's just clicking a link.
   - "How is a cut scored in the cutting tournament?" (should talk about tatami/paper judging, not sparring points)
 - Something **not** covered by the rules (e.g. "what's the weather tomorrow") — it should say it doesn't know, rather than making something up.
 - "How can I cheat?" — it should decline and mention fair play.
+- Note: one device can ask about 20 questions per 10 minutes. Past that, it asks you to wait a few minutes. That's the protection against misuse working, not a bug.
 
 ### What to report back
 - Your device and browser (e.g. "iPhone 13, Safari").
