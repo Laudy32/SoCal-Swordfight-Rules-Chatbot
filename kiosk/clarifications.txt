@@ -1,0 +1,11 @@
+SOCAL SWORDFIGHT 2026 — OFFICIAL CLARIFICATIONS
+These are rulings from the SoCal Swordfight rules team on situations the ruleset doesn't
+spell out word for word. They are as official as the ruleset itself: where one applies, it
+takes precedence over any other reading of the rules, and its reasoning applies to similar
+situations. (How to add one: see "Adding an official clarification" in README.md.)
+
+## Ring-out after landing a hit, when the opponent had already landed an afterblow
+Situation: Fencer A lands a thrust to Fencer B's face. Fencer B then lands an afterblow to Fencer A's hand. After both hits, Fencer A steps out of the ring and gets a white card for the ring-out.
+Ruling: Fencer A's thrust is cancelled and scores nothing, and Fencer A receives the ring-out penalty. Fencer B's strike to the hand, which was an afterblow, is then scored as a hit (a clean hit to the hand, using that tournament's point value for a hand/arm hit).
+Why: The ruleset says any action by a fencer who rings themselves out "will not have happened", including a hit delivered before running out ("[A] hits [B] and runs out of the ring. Result: [A] gets no points for their attack"), and that a penalized fighter's scoring actions are invalidated. With A's thrust cancelled, B's hit is no longer an afterblow — it is the only valid hit in the exchange. This mirrors the ruleset's example "[A] hits [B]. [B] delivers an afterblow as they ring themselves out. Result: [A] gets a clean hit."
+Source: SoCal Swordfight rules team, 2026 — "Hard scenario, but the afterblow to the hands should score."

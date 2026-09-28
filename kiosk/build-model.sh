@@ -29,6 +29,10 @@ ollama pull "$BASE_MODEL"
   echo 'SYSTEM """'
   cat "$HERE/guardrail-preamble.txt"
   cat "$HERE/rules-full.txt"
+  if [ -f "$HERE/clarifications.txt" ]; then
+    printf '\n\n--- OFFICIAL CLARIFICATIONS FROM THE SOCAL SWORDFIGHT RULES TEAM ---\n'
+    cat "$HERE/clarifications.txt"
+  fi
   echo '"""'
 } > "$MODELFILE"
 

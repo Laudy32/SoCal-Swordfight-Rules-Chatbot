@@ -9,6 +9,9 @@
 const MODEL = "gemini-flash-latest";
 const RULES_URL =
   "https://raw.githubusercontent.com/Laudy32/SoCal-Swordfight-Rules-Chatbot/main/kiosk/rules-full.txt";
+// Official rulings from the rules team on situations the ruleset doesn't spell out.
+const CLARIFICATIONS_URL =
+  "https://raw.githubusercontent.com/Laudy32/SoCal-Swordfight-Rules-Chatbot/main/kiosk/clarifications.txt";
 const ALLOWED_ORIGINS = [
   "https://laudy32.github.io",
   "http://localhost:8000",
@@ -50,6 +53,8 @@ const GUARDRAILS = `You answer questions about the SoCal Swordfight 2026 HEMA to
 - "Cut" means different things in different sections: a scoring action in the sparring tournaments (longsword, rapier, saber, etc.) versus a judged attempt on a tatami or paper target in the separate Cutting Tournaments. Use the section that matches the question; if it's unclear which the person means, say how the answer differs or ask.
 - If the question doesn't say which tournament or weapon, answer for the most likely one and mention if it differs elsewhere.
 - Sections marked STAFF REFERENCE are written for judges and directors; you may use them to explain how judging works.
+- The OFFICIAL CLARIFICATIONS section after the ruleset holds rulings from the SoCal Swordfight rules team. They are official: where one applies, follow it over your own reading of the ruleset, and apply its reasoning to similar situations.
+- When a rule cancels an action (a ring-out, a penalty, or anything the rules say "will not have happened" or is "invalidated"), work out the rest of the exchange as if that action never occurred. For example, a hit that followed a cancelled hit is no longer an afterblow.
 - If asked how to cheat, break the rules, or gain an unfair advantage, decline and note that the event expects fair play, good sportsmanship, and following staff instructions.
 - For safety concerns, disputed calls, or equipment approval, point the person to tournament staff even when the ruleset has relevant text.
 - Keep answers short: a few sentences or a brief list. Plain text only, no markdown formatting.
@@ -59,23 +64,39 @@ const GUARDRAILS = `You answer questions about the SoCal Swordfight 2026 HEMA to
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
-let rulesCache = { text: null, fetchedAt: 0 };
+let rulesCache = { text: null, clarifications: "", fetchedAt: 0 };
 let activeModel = MODEL;
 let modelListCache = { lists: null, fetchedAt: 0 };
 // model name -> { until: timestamp ms, daily: boolean } for models out of free quota
 const exhausted = new Map();
 
+// Returns { text, clarifications }. The ruleset is required; clarifications are optional.
 async function loadRules() {
   const now = Date.now();
   if (rulesCache.text && now - rulesCache.fetchedAt < RULES_CACHE_SECONDS * 1000) {
-    return rulesCache.text;
+    return rulesCache;
   }
-  const res = await fetch(RULES_URL, { cf: { cacheTtl: RULES_CACHE_SECONDS } });
+  const [res, clarRes] = await Promise.all([
+    fetch(RULES_URL, { cf: { cacheTtl: RULES_CACHE_SECONDS } }),
+    fetch(CLARIFICATIONS_URL, { cf: { cacheTtl: RULES_CACHE_SECONDS } }).catch(() => null),
+  ]);
   if (!res.ok) throw new Error(`Rules fetch failed: HTTP ${res.status}`);
   const text = await res.text();
   if (!text.trim()) throw new Error("Rules file is empty");
-  rulesCache = { text, fetchedAt: now };
-  return text;
+  let clarifications = "";
+  if (clarRes && clarRes.ok) {
+    clarifications = (await clarRes.text()).trim();
+  } else {
+    console.log("No clarifications loaded:", clarRes ? `HTTP ${clarRes.status}` : "fetch failed");
+  }
+  rulesCache = { text, clarifications, fetchedAt: now };
+  return rulesCache;
+}
+
+function knowledgeText({ text, clarifications }) {
+  return clarifications
+    ? `${text}\n\n--- OFFICIAL CLARIFICATIONS FROM THE SOCAL SWORDFIGHT RULES TEAM ---\n${clarifications}`
+    : text;
 }
 
 // ---- Choosing a model --------------------------------------------------------
@@ -422,9 +443,14 @@ async function limitsStatus(env) {
 
 async function handleHealth(env, origin) {
   let rules = { ok: false };
+  let clarifications = { loaded: false, rulings: 0 };
   try {
-    const text = await loadRules();
-    rules = { ok: true, characters: text.length };
+    const loaded = await loadRules();
+    rules = { ok: true, characters: loaded.text.length };
+    clarifications = {
+      loaded: Boolean(loaded.clarifications),
+      rulings: (loaded.clarifications.match(/^## /gm) || []).length,
+    };
   } catch (err) {
     rules = { ok: false, error: err.message };
   }
@@ -453,6 +479,7 @@ async function handleHealth(env, origin) {
       message: "SoCal Swordfight rules helper is running. The web page sends questions here with POST.",
       apiKeyConfigured: Boolean(env.GEMINI_API_KEY),
       rules,
+      clarifications,
       model,
       protection: {
         humanCheck: env.TURNSTILE_SECRET_KEY ? "on" : "off (TURNSTILE_SECRET_KEY not set)",
@@ -512,7 +539,7 @@ async function handleAsk(request, env, ctx, origin) {
   }
 
   const payload = {
-    systemInstruction: { parts: [{ text: GUARDRAILS + rules }] },
+    systemInstruction: { parts: [{ text: GUARDRAILS + knowledgeText(rules) }] },
     contents: [...cleanHistory(body.history), { role: "user", parts: [{ text: question }] }],
     generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
   };

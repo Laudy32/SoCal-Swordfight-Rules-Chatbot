@@ -24,3 +24,24 @@ Both are instructed to answer only from the ruleset, say so and point to
 tournament staff when something isn't covered, and decline "how do I cheat"
 style questions — see `GUARDRAILS` in `worker/worker.js` and
 `kiosk/guardrail-preamble.txt`.
+
+## Adding an official clarification
+
+When the rules team settles a situation the ruleset doesn't spell out (like a ring-out after an afterblow), add it to `kiosk/clarifications.txt`. The chatbot treats these rulings as official and applies their reasoning to similar situations. No Cloudflare step is needed.
+
+1. Go to **github.com/Laudy32/SoCal-Swordfight-Rules-Chatbot**, click the folder **kiosk**, then the file **clarifications.txt**.
+2. Click the **pencil icon** ("Edit this file"), near the top right of the file's contents.
+3. Click at the very end of the file, press **Enter** twice, and add the new ruling in the same shape as the existing one:
+   ```
+   ## A short title for the situation
+   Situation: What happened, step by step, and in what order.
+   Ruling: The correct call — who scores what, and any penalty.
+   Why: The rule text it's based on (optional but helpful).
+   Source: Who made the ruling, and when.
+   ```
+   Keep the `## ` at the start of the title line; that's how the chatbot tells rulings apart.
+4. Click the green **Commit changes…** button, then **Commit changes** in the box that pops up.
+5. The web chatbot picks it up by itself within about an hour.
+6. The offline kiosk laptop only picks it up after its model is rebuilt: run `bash build-model.sh` again (see `kiosk/README.md`).
+
+To check the web chatbot has loaded it, open the Worker's address (see `worker/README.md`, Part 4) and look for `"clarifications":{"loaded":true,"rulings":` followed by the number of rulings.
