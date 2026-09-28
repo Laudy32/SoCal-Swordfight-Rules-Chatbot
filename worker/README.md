@@ -43,7 +43,7 @@ between them, and change one line on GitHub.
 6. A long code appears (letters and numbers, often starting with `AIza`). Click the **copy** icon next to it.
 7. Open a text note on your computer (Notes on Mac, Notepad on Windows) and paste the key there for now. You'll need it in Part 3.
 8. **Important:** if Google ever offers to "set up billing" or "upgrade" for this key, say no. Without billing, the key stays on the free plan. The worst that can happen is it stops answering for the rest of the day if lots of people use it — it can never charge you money.
-9. Optional but useful: on the same site, find the page about **rate limits** or **usage limits** and note how many requests per day the free plan allows for the model **gemini-2.5-flash**. That number is roughly how many questions the chatbot can answer per day.
+9. Optional but useful: on the same site, find the page about **rate limits** or **usage limits** and note how many requests per day the free plan allows for **Flash** models (the Worker uses Google's newest Flash model). That number is roughly how many questions the chatbot can answer per day.
 
 You can close this tab.
 
@@ -91,7 +91,7 @@ You can close this tab.
 2. You'll see a short block of text, not a normal web page. That's expected. Check two things in it:
    - It contains `"apiKeyConfigured":true`
    - It contains `"rules":{"ok":true`
-3. If both are there, the Worker is ready. Go to Part 5.
+3. If both are there, the Worker is ready. Go to Part 5. (You'll also see a `"model"` section listing the Google AI models the Worker can use. You don't need to do anything with it — it's there to help diagnose problems.)
    - If it says `"apiKeyConfigured":false` — redo Part 3, and check the name is exactly `GEMINI_API_KEY`.
    - If it says `"rules":{"ok":false` — something is wrong with the rulebook file in the GitHub repo. Check that `kiosk/rules-full.txt` still exists there.
    - If the page doesn't load at all — double-check the address was copied exactly.
@@ -129,7 +129,7 @@ You can delete the text note now (or keep the API key somewhere safe, like a pas
 
 The chat page shows a short message:
 - **"has hit its free usage limit"** — the free daily allowance is used up. It resets by itself, usually within a day.
-- **"Setup problem: the AI model … isn't available"** — Google retired that AI model. In Cloudflare, open the Worker, click **Edit code**, change `gemini-2.5-flash` on the line starting `const MODEL` to a current model name from Google AI Studio (pick one with "flash" in the name), then click **Deploy**.
+- **"Setup problem: the AI model … isn't available and no replacement was found"** — normally you'll never see this: when Google retires a model, the Worker automatically switches to another available Flash model. If it does appear, open the Worker's address in your browser (as in Part 4) and send the `"model"` section to whoever helps maintain the chatbot.
 - **"Setup problem: the AI service key isn't valid"** or **"rejected this helper's key"** — make a new key (Part 1) and put it in the Worker (Part 3; edit the existing `GEMINI_API_KEY` entry instead of adding a new one).
 - **"Requests are only accepted from the SoCal Swordfight rules page"** — the web page's address changed. Ask someone comfortable editing code to add the new address to the `ALLOWED_ORIGINS` list near the top of `worker.js`.
 

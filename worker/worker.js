@@ -4,7 +4,9 @@
 // here (as the GEMINI_API_KEY secret), never in the public web page.
 
 // ---- Settings you may need to change ----------------------------------------
-const MODEL = "gemini-2.5-flash";
+// Preferred Gemini model. If Google retires it, the Worker switches to another
+// available Flash model by itself (see pickReplacementModel).
+const MODEL = "gemini-flash-latest";
 const RULES_URL =
   "https://raw.githubusercontent.com/Laudy32/SoCal-Swordfight-Rules-Chatbot/main/kiosk/rules-full.txt";
 const ALLOWED_ORIGINS = [
@@ -34,7 +36,10 @@ const GUARDRAILS = `You answer questions about the SoCal Swordfight 2026 HEMA to
 --- OFFICIAL RULESET ---
 `;
 
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
 let rulesCache = { text: null, fetchedAt: 0 };
+let activeModel = MODEL;
 
 async function loadRules() {
   const now = Date.now();
@@ -47,6 +52,37 @@ async function loadRules() {
   if (!text.trim()) throw new Error("Rules file is empty");
   rulesCache = { text, fetchedAt: now };
   return text;
+}
+
+async function listFlashModels(apiKey) {
+  const res = await fetch(`${GEMINI_BASE}/models?pageSize=1000`, {
+    headers: { "x-goog-api-key": apiKey },
+  });
+  if (!res.ok) throw new Error(`Model list failed: HTTP ${res.status}`);
+  const data = await res.json();
+  const flash = (data.models || [])
+    .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m) => String(m.name || "").replace(/^models\//, ""))
+    .filter((name) => /flash/i.test(name) && !/lite|tts|image|live|audio|embed/i.test(name));
+  const stable = flash.filter((name) => !/preview|exp/i.test(name));
+  return stable.length ? stable : flash;
+}
+
+function pickReplacementModel(names, exclude) {
+  const options = names.filter((name) => name !== exclude);
+  const latestAlias = options.find((name) => name.endsWith("-latest"));
+  if (latestAlias) return latestAlias;
+  const version = (name) => parseFloat((name.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || "0");
+  options.sort((a, b) => version(b) - version(a) || a.length - b.length);
+  return options[0] || null;
+}
+
+function callGemini(model, apiKey, payload) {
+  return fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify(payload),
+  });
 }
 
 function corsHeaders(origin) {
@@ -98,7 +134,7 @@ function explainGeminiError(status, bodyText) {
   if (status === 404) {
     return {
       status: 502,
-      error: `Setup problem: the AI model "${MODEL}" isn't available. Please let tournament staff know.`,
+      error: `Setup problem: the AI model "${activeModel}" isn't available and no replacement was found. Please let tournament staff know.`,
     };
   }
   if (status === 400 && /API key/i.test(bodyText)) {
@@ -127,13 +163,21 @@ async function handleHealth(env, origin) {
   } catch (err) {
     rules = { ok: false, error: err.message };
   }
+  const model = { preferred: MODEL, inUse: activeModel };
+  if (env.GEMINI_API_KEY) {
+    try {
+      model.availableFlashModels = await listFlashModels(env.GEMINI_API_KEY);
+    } catch (err) {
+      model.availableFlashModels = { error: err.message };
+    }
+  }
   return json(
     {
       status: "ok",
       message: "SoCal Swordfight rules helper is running. The web page sends questions here with POST.",
-      model: MODEL,
       apiKeyConfigured: Boolean(env.GEMINI_API_KEY),
       rules,
+      model,
     },
     200,
     origin,
@@ -170,18 +214,26 @@ async function handleAsk(request, env, origin) {
 
   const contents = [...cleanHistory(body.history), { role: "user", parts: [{ text: question }] }];
 
-  const geminiRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: GUARDRAILS + rules }] },
-        contents,
-        generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
-      }),
-    },
-  );
+  const payload = {
+    systemInstruction: { parts: [{ text: GUARDRAILS + rules }] },
+    contents,
+    generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
+  };
+  let geminiRes = await callGemini(activeModel, env.GEMINI_API_KEY, payload);
+
+  if (geminiRes.status === 404) {
+    const unavailable = activeModel;
+    try {
+      const replacement = pickReplacementModel(await listFlashModels(env.GEMINI_API_KEY), unavailable);
+      if (replacement) {
+        console.log(`Model "${unavailable}" unavailable; switching to "${replacement}"`);
+        activeModel = replacement;
+        geminiRes = await callGemini(activeModel, env.GEMINI_API_KEY, payload);
+      }
+    } catch (err) {
+      console.log("Replacement model lookup failed:", err.message);
+    }
+  }
 
   if (!geminiRes.ok) {
     const errText = await geminiRes.text();
