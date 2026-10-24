@@ -4,18 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SoCal Swordfight 2026 — Rules Helper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Oswald:wght@700&display=swap" rel="stylesheet">
 <style>
   :root {
-    color-scheme: light dark;
-    --bg: #14161c;
-    --panel: #1d2029;
-    --border: #2e3240;
-    --text: #e8e9ee;
-    --muted: #9aa0b0;
-    --accent: #c0392b;
-    --user-bubble: #2a4a6b;
-    --bot-bubble: #262a35;
-    --error: #e0786c;
+    color-scheme: light;
+    --bg: #ffffff;
+    --panel: #ffffff;
+    --border: #e9e9ea;
+    --text: #242a36;
+    --muted: #6b6f78;
+    --accent: #2d2f6a;
+    --gold: #caaf68;
+    --user-bubble: #e8e9f3;
+    --bot-bubble: #f4f5f7;
+    --error: #b3261e;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -23,7 +27,7 @@
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: "Lato", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   body {
     display: flex;
@@ -33,11 +37,19 @@
     padding: 0 12px;
   }
   header {
-    padding: 16px 4px 8px;
-    border-bottom: 1px solid var(--border);
+    padding: 16px 4px 10px;
+    border-bottom: 3px solid var(--gold);
+  }
+  header .logo {
+    display: block;
+    height: 56px;
+    margin-bottom: 8px;
   }
   header h1 {
-    font-size: 1.15rem;
+    font-family: "Oswald", sans-serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 1.45rem;
     margin: 0 0 4px;
   }
   header p {
@@ -106,7 +118,12 @@
     border: 1px solid var(--border);
     background: var(--panel);
     color: var(--text);
+    font-family: inherit;
     font-size: 1rem;
+  }
+  #question:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
   }
   button {
     padding: 10px 16px;
@@ -114,7 +131,8 @@
     border: none;
     background: var(--accent);
     color: white;
-    font-weight: 600;
+    font-family: inherit;
+    font-weight: 700;
     font-size: 0.9rem;
   }
   button:disabled {
@@ -126,6 +144,7 @@
 <body>
 
 <header>
+  <img class="logo" src="logo.png" alt="SoCal Swordfight">
   <h1>SoCal Swordfight 2026 — Rules Helper</h1>
   <p>
     Answers come from the official 2026 ruleset. Questions are sent to an AI
